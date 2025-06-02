@@ -1,0 +1,8 @@
+<IfModule mod_rewrite.c>
+    <IfModule mod_negotiation.c>
+        Options -MultiViews -Indexes
+    </IfModule>
+    <FilesMatch "\.(env|ini|conf|editorconfig|gitignore|gitattributes|md)$">
+    Require all denied
+    </FilesMatch>
+</IfModule>
