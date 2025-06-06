@@ -36,6 +36,8 @@ class User extends Authenticatable
         'longitude',
         'category_id',
         'description',
+        'customer_profile_id',
+        'payment_profile_id',
         'profile_image',
         'is_forgot',
         'is_verified',

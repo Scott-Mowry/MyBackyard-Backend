@@ -7,6 +7,7 @@ use App\Models\sub_points;
 use App\Models\subscription;
 use App\Models\User;
 use App\Models\Receipt;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use App\Http\Controllers\BaseController;
 use App\Services\AuthorizeNetService;
@@ -17,50 +18,110 @@ use net\authorize\api\controller as AnetController;
 
 class SubscriptionController extends BaseController
 {
-    public function addCardToProfile(Request $request, AuthorizeNetService $authService)
+    public function addCardToProfile(Request $request)
     {
+        $authService = new AuthorizeNetService();
         $request->validate([
             'user_id' => 'required|exists:users,id',
             'card_number' => 'required|digits:16',
             'expiration_date' => 'required|date_format:m/y',
-            'ccv' => 'required|digits:3'
+            'ccv' => 'required|digits:3',
+            'firstName' => 'required|string|max:255',
+            'lastName' => 'required|string|max:255',
+            'company' => 'nullable|string|max:255',
+            'address' => 'required|string|max:255',
+            'city' => 'required|string|max:255',
+            'state' => 'required|string|max:255',
+            'zip' => 'required|string|max:20',
+            'country' => 'required|string|max:100'
         ]);
 
         try {
             // Check if the user already has a payment profile
             $user = User::findOrFail($request->user_id);
-            $customerProfileId = $user->customer_profile_id;
-
-            if (!$customerProfileId) {
-                // Create a new customer profile and payment profile
-                $paymentProfileId = $authService->createCustomerProfile(
-                    $user,
-                    $request->card_number,
-                    $request->expiration_date,
-                    $request->ccv
-                );
-                // Save the payment profile ID to the user's record
-                $user->update([
-                    'customer_profile_id' => $paymentProfileId['customer_profile_id'],
-                    'payment_profile_id' => $paymentProfileId['payment_profile_id']
-                ]);
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => "User not found"], 400);
             } else {
-                // Add the new card to the existing payment profile
-                $paymentProfileId = $authService->updateCustomerProfile(
-                    $user,
-                    $request->card_number,
-                    $request->expiration_date,
-                    $request->ccv
-                );
-                $user->update([
-                    'customer_profile_id' => $paymentProfileId['customer_profile_id'],
-                    'payment_profile_id' => $paymentProfileId['payment_profile_id']
-                ]);
+                $customerProfileId = $user->customer_profile_id;
+
+                if (!$customerProfileId) {
+                    // Create a new customer profile and payment profile
+                    $paymentProfileId = $authService->createCustomerProfile(
+                        $user,
+                        $request->card_number,
+                        $request->expiration_date,
+                        $request->ccv,
+                        $request->firstName,
+                        $request->lastName,
+                        $request->company ?? "",
+                        $request->address,
+                        $request->city,
+                        $request->state,
+                        $request->zip,
+                        $request->country
+                    );
+                    // Save the payment profile ID to the user's record
+                    if (in_array('error', $paymentProfileId)) {
+                        return response()->json(['success' => false, 'message' => $paymentProfileId['error']], 400);
+                    } else {
+                        $user->update($paymentProfileId);
+                    }
+                } else {
+                    // Add the new card to the existing payment profile
+                    $paymentProfileId = $authService->updateCustomerProfile(
+                        $user->customer_profile_id,
+                        $user->payment_profile_id,
+                        $user,
+                        $request->card_number,
+                        $request->expiration_date,
+                        $request->ccv,
+                        $request->firstName,
+                        $request->lastName,
+                        $request->company ?? "",
+                        $request->address,
+                        $request->city,
+                        $request->state,
+                        $request->zip,
+                        $request->country
+                    );
+                    if (in_array('error', $paymentProfileId)) {
+                        return response()->json(['success' => false, 'message' => $paymentProfileId['error']], 400);
+                    } else {
+                        $user->update($paymentProfileId);
+                    }
+                }
             }
 
-            return response()->json(['success' => true, 'message' => 'Card added successfully.']);
+            return response()->json(['success' => true, 'message' => 'Card added successfully.', 'data' => $user], 200);
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => $e->getMessage(), $e->getTrace(), $e->getLine()], 500);
+        }
+    }
+
+    public function getCardInfo(Request $request)
+    {
+        $authService = new AuthorizeNetService();
+        $request->validate([
+            'user_id' => 'required|exists:users,id'
+        ]);
+
+        try {
+            // Check if the user already has a payment profile
+            $user = User::findOrFail($request->user_id);
+            $paymentProfileId = $user->payment_profile_id;
+
+            if (!$paymentProfileId) {
+                return response()->json(['success' => false, 'message' => "No Payment Profile Found"], 500);
+            } else {
+                // Add the new card to the existing payment profile
+                $paymentProfileId = $authService->getCustomerPaymentProfile(
+                    $user->customer_profile_id,
+                    $user->payment_profile_id
+                );
+                return response()->json(['success' => true, 'message' => "Info Fetch Successfully", "data" => $paymentProfileId], 200);
+            }
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage(), $e->getTrace(), $e->getLine()], 500);
         }
     }
 
@@ -203,8 +264,10 @@ class SubscriptionController extends BaseController
         ;
     }
 
-    public function processSubscriptionPayment(Request $request, AuthorizeNetService $authService)
+    public function processSubscriptionPayment(Request $request)
     {
+        $authService = new AuthorizeNetService();
+
         $request->validate([
             'user_id' => 'required|exists:users,id',
             'subscription_id' => 'required|exists:subscriptions,id',
@@ -212,39 +275,71 @@ class SubscriptionController extends BaseController
 
         try {
             $user = User::findOrFail($request->user_id);
-            $subscription = subscription::findOrFail($request->subscription_id);
-
-            // Retrieve the user's payment profile ID
-            $paymentProfileId = $user->payment_profile_id;
-            $customerProfileId = $user->customer_profile_id;
-
-            if (!$paymentProfileId) {
-                throw new \Exception('User does not have a payment profile.');
-            }
-
-            // Process the payment
-            $paymentResult = $authService->processPayment(
-
-                $customerProfileId,
-                $paymentProfileId,
-                $subscription->amount
-            );
-
-            if ($paymentResult['success']) {
-                // Save receipt
-                Receipt::create([
-                    'user_id' => $user->id,
-                    'payment_date' => now(),
-                    'subscription_id' => $subscription->id,
-                    'amount' => $subscription->amount,
-                    'duration' => $subscription->duration,
-                    'strikes' => 0,
-                ]);
-
-                return response()->json(['success' => true, 'message' => 'Payment processed successfully.']);
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => "User not found"], 400);
             } else {
-                // Handle payment failure
-                return response()->json(['success' => false, 'message' => 'Payment failed.'], 400);
+                $subscription = subscription::findOrFail($request->subscription_id);
+
+                if (!$subscription) {
+                    return response()->json(['success' => false, 'message' => 'Subscription not Found'], 400);
+                }
+
+                // Retrieve the user's payment profile ID
+                $paymentProfileId = $user->payment_profile_id;
+                $customerProfileId = $user->customer_profile_id;
+
+                if (!$paymentProfileId) {
+                    // throw new \Exception('User does not have a payment profile.');
+                    return response()->json(['success' => false, 'message' => 'User does not have a payment profile'], 400);
+                }
+
+                if ($user->sub_id != $request->subscription_id) {
+                    // Process the payment
+                    $paymentResult = $authService->processPayment(
+                        $customerProfileId,
+                        $paymentProfileId,
+                        $subscription->price
+                    );
+
+
+                    if (in_array('success', $paymentResult)) {
+                        $duration = 0;
+                        if ($subscription->type == 'Monthly') {
+                            if ($subscription->id == 5) {
+                                $now = Carbon::now();
+                                $targetDate = Carbon::createFromFormat('Y-m-d', '2025-08-31');
+                                if ($now->greaterThan($targetDate)) {
+                                    return response()->json(['success' => false, 'message' => 'Summer Sizzle Promotion is now depreciated'], 400);
+                                }
+                                $daysDiff = $now->diffInDays($targetDate); // Always positive
+                                $duration = $daysDiff; // 30 days for monthly subscription
+
+                            } else {
+                                $duration = 30; // 30 days for monthly subscription
+                            }
+                        } elseif ($subscription->type == 'Annually') {
+                            $duration = 365; // 365 days for annual subscription
+                        }
+
+                        // Save receipt
+                        Receipt::create([
+                            'user_id' => $user->id,
+                            'payment_date' => now(),
+                            'subscription_id' => $subscription->id,
+                            'amount' => $subscription->price,
+                            'duration' => $duration,
+                            'strikes' => 0,
+                        ]);
+
+                        $user->update(['sub_id' => $subscription->id]);
+                        return response()->json(['success' => true, 'message' => 'Payment processed successfully.', 'data' => $user]);
+                    } else {
+                        // Handle payment failure
+                        return response()->json(['success' => false, 'message' => 'Payment failed.', $paymentResult], 400);
+                    }
+                } else {
+                    return response()->json(['success' => false, 'message' => 'User already subscribed to this plan.'], 400);
+                }
             }
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);

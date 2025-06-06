@@ -59,14 +59,17 @@ Route::controller(PlacesController::class)->group(function () {
     Route::get('places', 'index');
 });
 
-Route::post('/createSub', [SubscriptionController::class, 'createSub']);
+
 Route::post('/support', [AuthController::class, 'supportAPI']);
 
-Route::get('/getSub', [SubscriptionController::class, 'getSub']);
-
-Route::post('/payment/add-card', [SubscriptionController::class, 'addCardToProfile']);
-Route::post('/payment', [SubscriptionController::class, 'processSubscriptionPayment']);
-Route::get('/pay', [SubscriptionController::class, 'checkCredit']);
+Route::controller(SubscriptionController::class)->group(function () {
+    Route::post('/createSub', 'createSub');
+    Route::get('/getSub', 'getSub');
+    Route::post('/payment/add-card', 'addCardToProfile');
+    Route::post('/payment/get-card', 'getCardInfo');
+    Route::post('/payment', 'processSubscriptionPayment');
+    Route::get('/pay', 'checkCredit');
+});
 
 
 Route::middleware('auth:sanctum')->group(function () {
