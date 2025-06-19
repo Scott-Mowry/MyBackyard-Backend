@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\ContentWeb;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class BaseController extends Controller
 {
@@ -35,6 +36,24 @@ class BaseController extends Controller
 
     public function sendError($error, $errorMessages = [], $code = 400)
     {
+
+        try {
+            DB::insert("
+    INSERT INTO error_log (
+        error_message,
+        error_code,
+        created_at,
+        updated_at
+    ) VALUES (?, ?, ?, NOW(), NOW())
+", [
+                $error,
+                $code,
+                12
+            ]);
+        } catch (\Exception $e) {
+            // Handle the exception if needed
+        }
+
         $response = [
             'status' => 0,
             'message' => $error,

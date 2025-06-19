@@ -15,6 +15,8 @@ function otpMailSend($email_object)
         });
         return 1;
     } catch (\Exception $e) {
+
+
         Log::error($e->getMessage());
         return 0;
     }
