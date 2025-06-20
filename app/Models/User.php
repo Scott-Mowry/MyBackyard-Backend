@@ -31,6 +31,7 @@ class User extends Authenticatable
         'social_type',
         'social_token',
         'last_name',
+        'zip_code',
         'address',
         'latitude',
         'longitude',

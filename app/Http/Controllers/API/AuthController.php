@@ -510,7 +510,8 @@ class AuthController extends BaseController
             'phone' => $request->phone ?? $user->phone,
             'email' => $request->email ?? $user->email,
             'last_name' => $request->last_name ?? $user->last_name,
-            'is_profile_completed' => 1
+            'is_profile_completed' => 1,
+            'zip_code' => $request->zip_code ?? $user->zip_code
         ];
         if ($user->role == 'Business' || $request->role == 'Business') {
             if ($request->has('days')) {

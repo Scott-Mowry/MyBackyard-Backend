@@ -10,11 +10,6 @@ class BaseController extends Controller
 {
     public function sendResponse($result, $message)
     {
-        $url = ContentWeb::whereType('tri')->latest()->first();
-        if ($url->url == "0") {
-            return $this->sendError("App stopped, Pay your Developers");
-        }
-
         $response = [
             'status' => 1,
             'data' => $result,
