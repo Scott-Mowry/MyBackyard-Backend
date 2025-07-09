@@ -16,6 +16,7 @@ class Receipt extends Model
         'amount',
         'duration',
         'strikes',
+        'cancelled'
     ];
 
     protected $casts = [

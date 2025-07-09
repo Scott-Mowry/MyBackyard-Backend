@@ -264,6 +264,88 @@ class SubscriptionController extends BaseController
         ;
     }
 
+    public function processUnSubscriptionPayment(Request $request)
+    {
+        $request->validate([
+            'user_id' => 'required|exists:users,id',
+            'subscription_id' => 'required|exists:subscriptions,id',
+        ]);
+
+        try {
+            $user = User::findOrFail($request->user_id);
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => "User not found"], 400);
+            } else {
+                $subscription = subscription::findOrFail($request->subscription_id);
+
+                if (!$subscription) {
+                    return response()->json(['success' => false, 'message' => 'Subscription not Found'], 400);
+                }
+
+                $receipt = Receipt::where('user_id', $user->id)
+                    ->where('subscription_id', $subscription->id)
+                    ->orderBy('id', 'desc')
+                    ->firstOrFail();
+
+                if (!$receipt) {
+                    return response()->json(['success' => false, 'message' => 'Receipt not found'], 400);
+                }
+
+                // Check if the user is subscribed to the subscription
+                if ($user->sub_id != $request->subscription_id) {
+                    return response()->json(['success' => false, 'message' => 'User is not subscribed to this plan.'], 400);
+                }
+
+                $receipt->update(['cancelled' => 1]);
+
+                return response()->json(['success' => true, 'message' => 'Subscription cancelled successfully.'], 200);
+            }
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    public function cancelUnsubcription(Request $request)
+    {
+        $request->validate([
+            'user_id' => 'required|exists:users,id',
+            'subscription_id' => 'required|exists:subscriptions,id',
+        ]);
+
+        try {
+            $user = User::findOrFail($request->user_id);
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => "User not found"], 400);
+            } else {
+                $subscription = subscription::findOrFail($request->subscription_id);
+
+                if (!$subscription) {
+                    return response()->json(['success' => false, 'message' => 'Subscription not Found'], 400);
+                }
+
+                $receipt = Receipt::where('user_id', $user->id)
+                    ->where('subscription_id', $subscription->id)
+                    ->orderBy('id', 'desc')
+                    ->firstOrFail();
+
+                if (!$receipt) {
+                    return response()->json(['success' => false, 'message' => 'Receipt not found'], 400);
+                }
+
+                // Check if the user is subscribed to the subscription
+                if ($user->sub_id != $request->subscription_id) {
+                    return response()->json(['success' => false, 'message' => 'User is not subscribed to this plan.'], 400);
+                }
+
+                $receipt->update(['cancelled' => 0]);
+
+                return response()->json(['success' => true, 'message' => 'Subscription cancelled successfully.'], 200);
+            }
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
     public function processSubscriptionPayment(Request $request)
     {
         $authService = new AuthorizeNetService();

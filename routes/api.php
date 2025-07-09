@@ -68,6 +68,8 @@ Route::controller(SubscriptionController::class)->group(function () {
     Route::post('/payment/add-card', 'addCardToProfile');
     Route::post('/payment/get-card', 'getCardInfo');
     Route::post('/payment', 'processSubscriptionPayment');
+    Route::post('/unsub', 'processUnSubscriptionPayment');
+    Route::post('/unsub/cancel', 'cancelUnsubcription');
     Route::get('/pay', 'checkCredit');
 });
 
