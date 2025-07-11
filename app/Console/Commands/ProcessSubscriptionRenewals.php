@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Services\AuthorizeNetService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ProcessSubscriptionRenewals extends Command
 {
@@ -15,80 +16,105 @@ class ProcessSubscriptionRenewals extends Command
 
     protected $description = 'Process subscription renewals and manage strikes.';
 
-    public function handle(AuthorizeNetService $authService)
+    public function handle()
     {
-        $receipts = Receipt::select(DB::raw('MAX(id) as id'))
-            ->whereRaw('payment_date > DATE_SUB(NOW(), INTERVAL duration DAY)')
-            ->where('strikes', '<', 3)
-            ->groupBy('user_id');
+        $authService = new AuthorizeNetService();
+        try {
+            $receipts = Receipt::whereIn('id', function ($query) {
+                $query->select(DB::raw('MAX(id)'))
+                    ->from('receipts')
+                    ->groupBy('user_id');
+            })
+                ->whereRaw('DATEDIFF(NOW(), payment_date) > duration')
+                ->where('strikes', '<', 3)
+                ->get();
 
-        foreach ($receipts as $receipt) {
-            $user = User::find($receipt->user_id);
-            if ($receipt->cancelled == 1) {
-                if ($user->sub_id == null) {
-                    continue;
-                } else {
-                    $user->update(['sub_id' => null]);
-                    $receipt->update(['strikes' => 3]);
-                    continue;
-                }
-            } else {
-                $id = 0;
-                if ($receipt->subscription_id == 5) {
-                    $id = 2;
-                } else {
-                    $id = $receipt->subscription_id;
-                }
-                $subscription = subscription::find($id);
-
-                if ($user & $subscription) {
-                    // Retrieve the user's payment profile ID
-                    $customerProfileId = $user->customer_profile_id;
-                    $paymentProfileId = $user->payment_profile_id;
-
-                    if ($customerProfileId == null || $paymentProfileId == null) {
+            foreach ($receipts as $receipt) {
+                $user = User::find($receipt->user_id);
+                if ($receipt->cancelled == 1) {
+                    if ($user->sub_id == null) {
+                        continue;
+                    } else {
                         $user->update(['sub_id' => null]);
                         $receipt->update(['strikes' => 3]);
                         continue;
+                    }
+                } else {
+                    $id = 0;
+                    if ($receipt->subscription_id == 5) {
+                        $id = 2;
                     } else {
-                        // Attempt to process payment
-                        $paymentResult = $authService->processPayment(
-                            $customerProfileId,
-                            $paymentProfileId,
-                            $subscription->price
-                        );
+                        $id = $receipt->subscription_id;
+                    }
+                    $subscription = subscription::find($id);
 
-                        if (in_array('success', $paymentResult)) {
-                            // Update receipt with new payment date
-                            // $receipt->update(['payment_date' => now(), 'strikes' => 0]);
-                            $duration = 0;
-                            if ($subscription->type == 'Monthly') {
-                                $duration = 30; // 30 days for monthly subscription
-                            } elseif ($subscription->type == 'Annually') {
-                                $duration = 365; // 365 days for annual subscription
-                            }
+                    if ($user && $subscription) {
+                        // Retrieve the user's payment profile ID
+                        $customerProfileId = $user->customer_profile_id;
+                        $paymentProfileId = $user->payment_profile_id;
 
-                            Receipt::create([
-                                'user_id' => $user->id,
-                                'payment_date' => now(),
-                                'subscription_id' => $subscription->id,
-                                'amount' => $subscription->price,
-                                'duration' => $duration,
-                                'strikes' => 0
-                            ]);
+                        if ($customerProfileId == null || $paymentProfileId == null) {
+                            $user->update(['sub_id' => null]);
+                            // $r = Receipt::find($receipt->id);
+                            $receipt->update(['strikes' => 3]);
+                            continue;
                         } else {
-                            // Increment strike count
-                            $receipt->increment('strikes');
+                            // Attempt to process payment
+                            try {
+                                $paymentResult = $authService->processPayment(
+                                    $customerProfileId,
+                                    $paymentProfileId,
+                                    $subscription->price
+                                );
 
-                            // Check if strikes exceed limit
-                            if ($receipt->strikes == 3) {
-                                // Disable subscription for the user
-                                $user->update(['sub_id' => null]);
+                                if (in_array('success', $paymentResult)) {
+                                    // Update receipt with new payment date
+                                    // $receipt->update(['payment_date' => now(), 'strikes' => 0]);
+                                    $duration = 0;
+                                    if ($subscription->type == 'Monthly') {
+                                        $duration = 30; // 30 days for monthly subscription
+                                    } elseif ($subscription->type == 'Annually') {
+                                        $duration = 365; // 365 days for annual subscription
+                                    }
+
+                                    Receipt::create([
+                                        'user_id' => $user->id,
+                                        'payment_date' => now(),
+                                        'subscription_id' => $subscription->id,
+                                        'amount' => $subscription->price,
+                                        'duration' => $duration,
+                                        'strikes' => 0
+                                    ]);
+                                } else {
+                                    // Increment strike count
+                                    $receipt->increment('strikes');
+
+                                    // Check if strikes exceed limit
+                                    if ($receipt->strikes == 3) {
+                                        // Disable subscription for the user
+                                        $user->update(['sub_id' => null]);
+                                    }
+                                }
+                            } catch (\Throwable $th) {
+                                //throw $th; $receipt->increment('strikes');
+
+                                // Check if strikes exceed limit
+                                if ($receipt->strikes == 3) {
+                                    // Disable subscription for the user
+                                    $user->update(['sub_id' => null]);
+                                }
                             }
                         }
                     }
                 }
             }
+        } catch (\Throwable $e) {
+            Log::error('Something went wrong: ' . $e->getMessage(), [
+                'exception' => $e,
+                'line' => $e->getLine(),
+                'file' => $e->getFile(),
+                'trace' => $e->getTraceAsString(),
+            ]);
         }
     }
 }

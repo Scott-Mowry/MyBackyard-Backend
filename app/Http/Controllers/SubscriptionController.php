@@ -339,7 +339,7 @@ class SubscriptionController extends BaseController
 
                 $receipt->update(['cancelled' => 0]);
 
-                return response()->json(['success' => true, 'message' => 'Subscription cancelled successfully.'], 200);
+                return response()->json(['success' => true, 'message' => 'UnSubscription process cancelled successfully.'], 200);
             }
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
@@ -422,6 +422,42 @@ class SubscriptionController extends BaseController
                 } else {
                     return response()->json(['success' => false, 'message' => 'User already subscribed to this plan.'], 400);
                 }
+            }
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    public function hasUnsubcribe(Request $request)
+    {
+        $request->validate([
+            'user_id' => 'required|exists:users,id',
+            'subscription_id' => 'required|exists:subscriptions,id',
+        ]);
+
+        try {
+            $user = User::findOrFail($request->user_id);
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => "User not found"], 400);
+            } else {
+                $subscription = subscription::findOrFail($request->subscription_id);
+
+                if (!$subscription) {
+                    return response()->json(['success' => false, 'message' => 'Subscription not Found'], 400);
+                }
+
+                $receipt = Receipt::where('user_id', $user->id)
+                    ->where('subscription_id', $subscription->id)
+                    ->orderBy('id', 'desc')
+                    ->first();
+
+                if (!$receipt) {
+                    return response()->json(['success' => false, 'message' => 'Receipt not found'], 400);
+                }
+
+                $unsubscribed = $receipt->cancelled;
+
+                return response()->json(['success' => true, 'message' => 'Fetched Succesfully', 'data' => ['unsub' => $unsubscribed]], 200);
             }
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
