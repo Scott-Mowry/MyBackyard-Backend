@@ -14,6 +14,7 @@ class subscription extends Model
         'name',
         'type',
         'price',
+        'is_depreciated'
     ];
 
     public function sub_points()

@@ -509,6 +509,7 @@ class SubscriptionController extends BaseController
     {
         // $user = auth()->user();
         $sub = subscription::with('sub_points')
+            ->where('is_depreciated', 0)
             // ->where('role', $user->role)
             ->get();
         if ($sub != null) {
