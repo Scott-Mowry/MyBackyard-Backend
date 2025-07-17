@@ -7,6 +7,7 @@ use App\Models\sub_points;
 use App\Models\subscription;
 use App\Models\User;
 use App\Models\Receipt;
+use App\Models\Promocode;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use App\Http\Controllers\BaseController;
@@ -531,6 +532,55 @@ class SubscriptionController extends BaseController
             );
         } else {
             return $this->sendError("Unable to process your request at the moment.");
+        }
+    }
+
+    public function applyPromoCode(Request $request)
+    {
+        $request->validate([
+            'user_id' => 'required|exists:users,id',
+            'code' => 'required|string|max:255',
+        ]);
+
+        try {
+            $user = User::findOrFail($request->user_id);
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => "User not found"], 400);
+            }
+
+            $promoCode = Promocode::where('code', $request->code)->first();
+            if (!$promoCode) {
+                return response()->json(['success' => false, 'message' => 'Invalid promo code'], 400);
+            }
+
+            // Check if the promo code has already been claimed by the user
+            if ($promoCode->claimed_by && $promoCode->claimed_by != $user->id) {
+                return response()->json(['success' => false, 'message' => 'Promo code already claimed by another user'], 400);
+            }
+
+            $subscription = Subscription::findOrFail($promoCode->subscription_id);
+
+            if (!$subscription) {
+                return response()->json(['success' => false, 'message' => 'Subscription not found for this promo code'], 400);
+            }
+
+            // Update the promo code with the user ID, Save receipt
+            Receipt::create([
+                'user_id' => $user->id,
+                'payment_date' => now(),
+                'subscription_id' => $subscription->id,
+                'amount' => $subscription->price,
+                'duration' => $promoCode->sub_duration,
+                'strikes' => 0,
+            ]);
+
+            $user->update(['sub_id' => $subscription->id]);
+            $promoCode->claimed_by = $user->id;
+            $promoCode->save();
+
+            return response()->json(['success' => true, 'message' => 'Promo code applied successfully'], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
 

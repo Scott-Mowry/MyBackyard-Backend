@@ -72,6 +72,7 @@ Route::controller(SubscriptionController::class)->group(function () {
     Route::post('/unsub/cancel', 'cancelUnsubcription');
     Route::post('/unsub/check', 'hasUnsubcribe');
     Route::get('/pay', 'checkCredit');
+    Route::post('/promocode/apply', 'applyPromocode');
 });
 
 
