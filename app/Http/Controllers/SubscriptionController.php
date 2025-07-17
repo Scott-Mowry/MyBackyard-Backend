@@ -538,7 +538,7 @@ class SubscriptionController extends BaseController
     public function applyPromoCode(Request $request)
     {
         $request->validate([
-            'user_id' => 'required|exists:users,id',
+            'user_id' => 'required',
             'code' => 'required|string|max:255',
         ]);
 

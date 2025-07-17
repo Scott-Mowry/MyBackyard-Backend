@@ -62,6 +62,17 @@
 
     @if (Auth::user()->role == 'Admin')
     <li class="nav-item">
+      <a class="nav-link {{ request()->is('admin/promocodes*') ? 'active' : 'collapsed' }}"
+      href="{{route('admin.promocodes')}}">
+
+      <i class="bi bi-ticket-perforated text-secondary"></i>
+      <span>Promo Codes</span>
+      </a>
+    </li>
+  @endif
+
+    @if (Auth::user()->role == 'Admin')
+    <li class="nav-item">
       <a class="nav-link {{ request()->is('admin/cms*') ? 'active' : 'collapsed' }}" href="{{route('admin.cms')}}">
 
       <i class="bi bi-file-lock text-secondary"></i>

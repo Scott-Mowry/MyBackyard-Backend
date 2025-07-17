@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Admin\PromoCodeController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Admin\PlacesController;
 use App\Http\Controllers\API\CMSController;
@@ -57,6 +58,15 @@ Route::prefix('admin')->group(function () {
         Route::controller(UserController::class)->group(function () {
             Route::prefix('/subscribedUsers')->group(function () {
                 Route::get('/', 'getSubscribedUsers')->name('admin.subUsers');
+            });
+        });
+
+        Route::controller(PromoCodeController::class)->group(function () {
+            Route::prefix('/promocodes')->group(function () {
+                Route::get('/', 'getCodes')->name('admin.promocodes');
+                Route::get('/delete/{id}', 'promoCodeDelete')->name('admin.promocodes.destroy');
+                Route::post('/add', 'addPromoCode')->name('admin.promocodes.add');
+                Route::get('/add/form', 'addPromoCodeForm')->name('admin.promocodes.addForm');
             });
         });
 
