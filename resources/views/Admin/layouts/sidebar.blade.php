@@ -50,7 +50,7 @@
       </a>
     </li>
 
-    @if (Auth::user()->role == 'Admin')
+    @if (Auth::user()->isAdmin())
     <li class="nav-item">
       <a class="nav-link {{ request()->is('admin/places*') ? 'active' : 'collapsed' }}"
       href="{{route('admin.places')}}">
@@ -60,7 +60,7 @@
     </li>
   @endif
 
-    @if (Auth::user()->role == 'Admin')
+    @if (Auth::user()->isAdmin())
     <li class="nav-item">
       <a class="nav-link {{ request()->is('admin/promocodes*') ? 'active' : 'collapsed' }}"
       href="{{route('admin.promocodes')}}">
@@ -71,7 +71,7 @@
     </li>
   @endif
 
-    @if (Auth::user()->role == 'Admin')
+    @if (Auth::user()->isAdmin())
     <li class="nav-item">
       <a class="nav-link {{ request()->is('admin/cms*') ? 'active' : 'collapsed' }}" href="{{route('admin.cms')}}">
 

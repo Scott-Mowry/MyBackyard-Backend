@@ -46,7 +46,8 @@ class User extends Authenticatable
         'is_push_notify',
         'is_profile_completed',
         'phone',
-        'sub_id'
+        'sub_id',
+        'is_sub_admin'
     ];
 
     /**
@@ -73,8 +74,14 @@ class User extends Authenticatable
 
     public function isAdmin()
     {
-        return $this->role === 'Admin';
+        return $this->getAttribute('role') == 'Admin';
     }
+
+    public function isSubAdmin()
+    {
+        return $this->getAttribute('role') == 'is_sub_admin';
+    }
+
 
     public function scopeNearbyBusinesses($query, $latitude, $longitude, $radius, $limit)
     {
