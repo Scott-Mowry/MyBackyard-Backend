@@ -41,7 +41,11 @@ return [
             'provider' => 'users',
 
         ],
-        
+        'sanctum' => [
+            'driver' => 'sanctum',
+            'provider' => 'users',
+        ],
+
     ],
 
     /*
@@ -66,7 +70,7 @@ return [
             'driver' => 'eloquent',
             'model' => App\Models\User::class,
         ],
-        
+
         // 'users' => [
         //     'driver' => 'database',
         //     'table' => 'users',

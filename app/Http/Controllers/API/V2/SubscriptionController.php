@@ -1,18 +1,19 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\API\V2;
 
 use App\Http\Requests\StoresubscriptionRequest;
 use App\Models\sub_points;
 use App\Models\subscription;
 use App\Models\User;
 use App\Models\Receipt;
-use App\Models\Promocode;
+use App\Models\BusinessPromoCode;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use App\Http\Controllers\BaseController;
 use App\Services\AuthorizeNetService;
-use Validator;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log;
 
 use net\authorize\api\contract\v1 as AnetAPI;
 use net\authorize\api\controller as AnetController;
@@ -412,6 +413,13 @@ class SubscriptionController extends BaseController
                             'amount' => $subscription->price,
                             'duration' => $duration,
                             'strikes' => 0,
+                            'cancelled' => false,
+                            'is_recurring' => false,
+                            'recurring_subscription_id' => null,
+                            'authorize_transaction_id' => $paymentResult['transaction_id'] ?? null,
+                            'payment_type' => 'one_time',
+                            'billing_cycle_number' => null,
+                            'next_billing_date' => null,
                         ]);
 
                         $user->update(['sub_id' => $subscription->id]);
@@ -506,35 +514,6 @@ class SubscriptionController extends BaseController
         }
     }
 
-    public function getSub(Request $request)
-    {
-        // $user = auth()->user();
-        $sub = subscription::with('sub_points')
-            ->where('is_depreciated', 0)
-            // ->where('role', $user->role)
-            ->get();
-        if ($sub != null) {
-            $sub = $sub->map(function ($sub) {
-                $list = collect();
-                foreach ($sub->sub_points as $points) {
-                    $list->push($points->point);
-                }
-                unset($sub->sub_points);
-                $sub->sub_points = $list;
-                return $sub;
-            });
-
-            return $this->sendResponse(
-                array(
-                    'subcriptions' => $sub
-                ),
-                "All Subscription Fetched Successfully"
-            );
-        } else {
-            return $this->sendError("Unable to process your request at the moment.");
-        }
-    }
-
     public function applyPromoCode(Request $request)
     {
         $request->validate([
@@ -548,39 +527,436 @@ class SubscriptionController extends BaseController
                 return response()->json(['success' => false, 'message' => "User not found with ID: {$request->user_id}"], 400);
             }
 
-            $promoCode = Promocode::where('code', $request->code)->first();
+            // Find the business promo code using the enhanced model
+            $promoCode = BusinessPromoCode::where('code', strtoupper(trim($request->code)))
+                ->valid() // Use the scope for active, not expired, not exhausted
+                ->first();
+
             if (!$promoCode) {
-                return response()->json(['success' => false, 'message' => 'Invalid promo code'], 400);
+                return response()->json(['success' => false, 'message' => 'Invalid or expired promo code'], 400);
             }
 
-            // Check if the promo code has already been claimed by the user
-            if ($promoCode->claimed_by && $promoCode->claimed_by != $user->id) {
-                return response()->json(['success' => false, 'message' => 'Promo code already claimed by another user'], 400);
+            // Check if user can use this promo code
+            if (!$promoCode->canBeUsedBy($user)) {
+                return response()->json(['success' => false, 'message' => 'This promo code is not available for your account type'], 400);
             }
 
-            $subscription = Subscription::findOrFail($promoCode->subscription_id);
+            // Check if promo code has applicable subscriptions
+            $applicableSubscriptions = $promoCode->applicable_subscriptions;
+            if (empty($applicableSubscriptions)) {
+                return response()->json(['success' => false, 'message' => 'No valid subscriptions for this promo code'], 400);
+            }
 
+            // Get the first applicable subscription (you could also let user choose)
+            $subscription = subscription::find($applicableSubscriptions[0]);
             if (!$subscription) {
                 return response()->json(['success' => false, 'message' => 'Subscription not found for this promo code'], 400);
             }
 
-            // Update the promo code with the user ID, Save receipt
+            // Calculate discount amount and final price
+            $originalPrice = $subscription->price;
+            $discountAmount = $promoCode->calculateDiscount($originalPrice);
+            $finalAmount = max(0, $originalPrice - $discountAmount);
+
+            // Determine duration based on promo type
+            $duration = $promoCode->free_days ?: 30; // Use free_days if set, otherwise default to 30
+
+            // Create receipt with enhanced data
             Receipt::create([
                 'user_id' => $user->id,
                 'payment_date' => now(),
                 'subscription_id' => $subscription->id,
-                'amount' => $subscription->price,
-                'duration' => $promoCode->sub_duration,
+                'amount' => $finalAmount,
+                'duration' => $duration,
                 'strikes' => 0,
+                'cancelled' => false,
+                'is_recurring' => false,
+                'recurring_subscription_id' => null,
+                'authorize_transaction_id' => 'PROMO_' . $promoCode->code . '_' . time(),
+                'payment_type' => 'promo',
+                'billing_cycle_number' => null,
+                'next_billing_date' => null,
             ]);
 
+            // Update user subscription
             $user->update(['sub_id' => $subscription->id]);
-            $promoCode->claimed_by = $user->id;
-            $promoCode->save();
 
-            return response()->json(['success' => true, 'message' => 'Promo code applied successfully'], 200);
+            // Increment promo code usage count
+            $promoCode->incrementUsage();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Promo code applied successfully! ' . $promoCode->formatted_discount . ' discount applied.',
+                'data' => [
+                    'promo_code' => $promoCode->code,
+                    'discount_type' => $promoCode->discount_type,
+                    'discount_amount' => $discountAmount,
+                    'original_price' => $originalPrice,
+                    'final_amount' => $finalAmount,
+                    'duration_days' => $duration,
+                    'subscription' => $subscription,
+                    'user' => $user->fresh()
+                ]
+            ], 200);
+
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Create recurring subscription for business users
+     */
+    public function createRecurringSubscription(Request $request)
+    {
+        $authService = new AuthorizeNetService();
+
+        $request->validate([
+            'user_id' => 'required|exists:users,id',
+            'subscription_id' => 'required|exists:subscriptions,id',
+            'start_date' => 'nullable|date|after_or_equal:today',
+            'total_occurrences' => 'nullable|integer|min:1|max:9999'
+        ]);
+
+        try {
+            $user = User::findOrFail($request->user_id);
+            $subscription = subscription::findOrFail($request->subscription_id);
+
+            // Check if user has payment profile
+            if (!$user->customer_profile_id || !$user->payment_profile_id) {
+                return response()->json(['success' => false, 'message' => 'User does not have a payment profile. Please add a payment method first.'], 400);
+            }
+
+            // Check if user already has active recurring subscription
+            if ($user->recurring_subscription_id && $user->recurring_subscription_status === 'active') {
+                return response()->json(['success' => false, 'message' => 'User already has an active recurring subscription.'], 400);
+            }
+
+            $startDate = $request->start_date ? new \DateTime($request->start_date) : new \DateTime();
+            $totalOccurrences = $request->total_occurrences ?? 9999;
+
+            // Get the billing cycle from the subscription
+            $billingCycle = $subscription->billing_cycle ?? 'monthly';
+
+            // Handle Authorize.Net limitations for daily billing cycles
+            $actualBillingCycle = $billingCycle;
+            if (strtolower($billingCycle) === 'daily') {
+                // Authorize.Net requires minimum 7 days for day-based subscriptions
+                // So daily subscriptions will actually be billed weekly
+                $actualBillingCycle = 'weekly';
+                Log::info('Daily billing cycle converted to weekly due to Authorize.Net limitations', [
+                    'original_billing_cycle' => $billingCycle,
+                    'actual_billing_cycle' => $actualBillingCycle
+                ]);
+            }
+
+            // Log the billing cycle for debugging
+            Log::info('Creating recurring subscription', [
+                'user_id' => $user->id,
+                'subscription_id' => $subscription->id,
+                'original_billing_cycle' => $billingCycle,
+                'actual_billing_cycle' => $actualBillingCycle,
+                'price' => $subscription->price
+            ]);
+
+            // Create recurring subscription
+            $result = $authService->createRecurringSubscription(
+                $user->customer_profile_id,
+                $user->payment_profile_id,
+                $subscription->price,
+                $subscription->name . " - " . $user->name,
+                $actualBillingCycle,
+                $startDate,
+                $totalOccurrences
+            );
+
+            if ($result['success']) {
+                // Calculate next billing date based on actual billing cycle used
+                $nextBillingDate = clone $startDate;
+                switch (strtolower($actualBillingCycle)) {
+                    case 'daily':
+                        $nextBillingDate->add(new \DateInterval('P1D'));
+                        break;
+                    case 'weekly':
+                        $nextBillingDate->add(new \DateInterval('P7D'));
+                        break;
+                    case 'monthly':
+                        $nextBillingDate->add(new \DateInterval('P1M'));
+                        break;
+                    case 'annually':
+                    case 'yearly':
+                        $nextBillingDate->add(new \DateInterval('P1Y'));
+                        break;
+                    default:
+                        // Default to monthly
+                        $nextBillingDate->add(new \DateInterval('P1M'));
+                        break;
+                }
+
+                // Update user with recurring subscription info
+                $user->update([
+                    'recurring_subscription_id' => $result['subscription_id'],
+                    'recurring_subscription_start_date' => $startDate,
+                    'recurring_subscription_status' => 'active',
+                    'sub_id' => $subscription->id
+                ]);
+
+                // Create initial receipt
+                Receipt::create([
+                    'user_id' => $user->id,
+                    'payment_date' => $startDate,
+                    'subscription_id' => $subscription->id,
+                    'amount' => $subscription->price,
+                    'duration' => $this->calculateDuration($actualBillingCycle),
+                    'strikes' => 0,
+                    'cancelled' => false,
+                    'is_recurring' => true,
+                    'recurring_subscription_id' => $result['subscription_id'],
+                    'authorize_transaction_id' => 'RECURRING_SETUP_' . $result['subscription_id'],
+                    'payment_type' => 'recurring',
+                    'billing_cycle_number' => 1,
+                    'next_billing_date' => $nextBillingDate
+                ]);
+
+                $responseMessage = 'Recurring subscription created successfully.';
+                if (strtolower($billingCycle) === 'daily') {
+                    $responseMessage .= ' Note: Due to payment processor limitations, daily billing cycles are processed weekly (every 7 days).';
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'message' => $responseMessage,
+                    'data' => [
+                        'subscription_id' => $result['subscription_id'],
+                        'next_billing_date' => $nextBillingDate->format('Y-m-d H:i:s'),
+                        'original_billing_cycle' => $billingCycle,
+                        'actual_billing_cycle' => $actualBillingCycle,
+                        'user' => $user->fresh(),
+                        'subscription' => $subscription
+                    ]
+                ], 200);
+            } else {
+                return response()->json(['success' => false, 'message' => $result['error']], 400);
+            }
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Cancel recurring subscription
+     */
+    public function cancelRecurringSubscription(Request $request)
+    {
+        $authService = new AuthorizeNetService();
+
+        $request->validate([
+            'user_id' => 'required|exists:users,id',
+        ]);
+
+        try {
+            $user = User::findOrFail($request->user_id);
+
+            if (!$user->recurring_subscription_id) {
+                return response()->json(['success' => false, 'message' => 'User does not have a recurring subscription.'], 400);
+            }
+
+            // Check if already cancelled
+            if ($user->recurring_subscription_status === 'cancelled') {
+                return response()->json(['success' => false, 'message' => 'Recurring subscription is already cancelled.'], 400);
+            }
+
+            // Cancel subscription with Authorize.Net
+            $result = $authService->cancelRecurringSubscription($user->recurring_subscription_id);
+
+            if ($result['success']) {
+                // Update user status
+                $user->update([
+                    'recurring_subscription_status' => 'cancelled'
+                ]);
+
+                // Update receipts to mark as cancelled
+                Receipt::where('user_id', $user->id)
+                    ->where('recurring_subscription_id', $user->recurring_subscription_id)
+                    ->where('is_recurring', true)
+                    ->update(['cancelled' => 1]);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Recurring subscription cancelled successfully.',
+                    'data' => ['user' => $user->fresh()]
+                ], 200);
+            } else {
+                return response()->json(['success' => false, 'message' => $result['error']], 400);
+            }
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Get recurring subscription status
+     */
+    public function getRecurringSubscriptionStatus(Request $request)
+    {
+        $authService = new AuthorizeNetService();
+
+        $request->validate([
+            'user_id' => 'required|exists:users,id',
+        ]);
+
+        try {
+            $user = User::findOrFail($request->user_id);
+
+            if (!$user->recurring_subscription_id) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'status' => 'none',
+                        'message' => 'No recurring subscription found',
+                        'user_status' => $user->recurring_subscription_status
+                    ]
+                ], 200);
+            }
+
+            // Get local status first
+            $localStatus = [
+                'local_status' => $user->recurring_subscription_status,
+                'subscription_id' => $user->recurring_subscription_id,
+                'start_date' => $user->recurring_subscription_start_date,
+                'user' => $user
+            ];
+
+            // Try to get status from Authorize.Net (optional - may fail due to API issues)
+            try {
+                $result = $authService->getSubscriptionStatus($user->recurring_subscription_id);
+                if ($result['success']) {
+                    $localStatus['authorize_status'] = $result['status'];
+                }
+            } catch (\Exception $e) {
+                // Log the error but don't fail the request
+                Log::warning('Failed to get Authorize.Net subscription status: ' . $e->getMessage());
+                $localStatus['authorize_status'] = 'unavailable';
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $localStatus
+            ], 200);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Update recurring subscription plan
+     */
+    public function updateRecurringSubscription(Request $request)
+    {
+        $authService = new AuthorizeNetService();
+
+        $request->validate([
+            'user_id' => 'required|exists:users,id',
+            'new_subscription_id' => 'required|exists:subscriptions,id'
+        ]);
+
+        try {
+            $user = User::findOrFail($request->user_id);
+            $newSubscription = subscription::findOrFail($request->new_subscription_id);
+
+            if (!$user->recurring_subscription_id || $user->recurring_subscription_status !== 'active') {
+                return response()->json(['success' => false, 'message' => 'User does not have an active recurring subscription.'], 400);
+            }
+
+            // Try to update subscription amount with Authorize.Net
+            $result = $authService->updateRecurringSubscription(
+                $user->recurring_subscription_id,
+                $newSubscription->price
+            );
+
+            if ($result['success']) {
+                // Update user's subscription
+                $user->update(['sub_id' => $newSubscription->id]);
+
+                // Create a receipt for the plan change
+                Receipt::create([
+                    'user_id' => $user->id,
+                    'payment_date' => now(),
+                    'subscription_id' => $newSubscription->id,
+                    'amount' => $newSubscription->price,
+                    'duration' => $newSubscription->billing_cycle === 'annually' ? 365 : 30,
+                    'strikes' => 0,
+                    'cancelled' => false,
+                    'is_recurring' => true,
+                    'recurring_subscription_id' => $user->recurring_subscription_id,
+                    'authorize_transaction_id' => 'PLAN_CHANGE_' . time(),
+                    'payment_type' => 'recurring',
+                    'billing_cycle_number' => 0, // Plan change
+                    'next_billing_date' => null, // Will be calculated by next billing cycle
+                ]);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Recurring subscription updated successfully.',
+                    'data' => [
+                        'user' => $user->fresh(),
+                        'new_subscription' => $newSubscription
+                    ]
+                ], 200);
+            } else {
+                return response()->json(['success' => false, 'message' => $result['error']], 400);
+            }
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Get subscription with new fields
+     */
+    public function getSubV2(Request $request)
+    {
+        $user = $request->user();
+
+        $subscriptions = subscription::with('sub_points')
+            ->where('status', 'active')
+            ->where('on_show', true)
+            ->when($user, function ($query) use ($user) {
+                return $query->where('role', $user->role);
+            })
+            ->ordered()
+            ->get();
+
+        if ($subscriptions->isNotEmpty()) {
+            $subscriptions = $subscriptions->map(function ($sub) {
+                $list = collect();
+                foreach ($sub->sub_points as $points) {
+                    $list->push($points->point);
+                }
+
+                // Add new fields to response
+                $subData = $sub->toArray();
+                $subData['sub_points'] = $list;
+                $subData['formatted_price'] = $sub->formatted_price;
+                $subData['is_popular'] = (bool) $sub->is_popular;
+
+                return $subData;
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => ['subscriptions' => $subscriptions],
+                'message' => 'Subscriptions fetched successfully'
+            ], 200);
+        } else {
+            return response()->json([
+                'success' => false,
+                'message' => 'No active subscriptions found'
+            ], 404);
         }
     }
 
@@ -630,5 +1006,25 @@ class SubscriptionController extends BaseController
     public function destroy(subscription $subscription)
     {
         //
+    }
+
+    /**
+     * Calculate duration in days based on billing cycle
+     */
+    private function calculateDuration($billingCycle)
+    {
+        switch (strtolower($billingCycle)) {
+            case 'daily':
+                return 1;
+            case 'weekly':
+                return 7;
+            case 'monthly':
+                return 30;
+            case 'annually':
+            case 'yearly':
+                return 365;
+            default:
+                return 30; // Default to monthly
+        }
     }
 }

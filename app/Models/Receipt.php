@@ -16,12 +16,21 @@ class Receipt extends Model
         'amount',
         'duration',
         'strikes',
-        'cancelled'
+        'cancelled',
+        'is_recurring',
+        'recurring_subscription_id',
+        'authorize_transaction_id',
+        'payment_type',
+        'billing_cycle_number',
+        'next_billing_date'
     ];
 
     protected $casts = [
         'payment_date' => 'datetime',
+        'next_billing_date' => 'datetime',
         'amount' => 'decimal:2',
+        'is_recurring' => 'boolean',
+        'cancelled' => 'boolean'
     ];
 
     // Relationships
@@ -33,6 +42,6 @@ class Receipt extends Model
 
     public function subscription()
     {
-        return $this->belongsTo(Subscription::class);
+        return $this->belongsTo(subscription::class);
     }
 }

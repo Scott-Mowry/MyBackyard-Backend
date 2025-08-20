@@ -350,6 +350,167 @@ class AuthorizeNetService
         }
     }
 
+    /**
+     * Get customer profile ID for a user
+     */
+    private function getCustomerProfileId(User $user): ?string
+    {
+        // This would typically query your database for the customer profile ID
+        // For now, we'll assume it's stored in the user model or related table
+        return $user->authorize_customer_profile_id ?? null;
+    }
+
+    /**
+     * Get payment profile ID for a user
+     */
+    private function getPaymentProfileId(User $user): ?string
+    {
+        // This would typically query your database for the payment profile ID
+        // For now, we'll assume it's stored in the user model or related table
+        return $user->authorize_payment_profile_id ?? null;
+    }
+
+    /**
+     * Create trial subscription with Authorize.Net
+     */
+    public function createTrialSubscription(
+        User $user,
+        \App\Models\Subscription $subscription,
+        int $trialDays,
+        float $originalAmount,
+        string $billingCycle
+    ) {
+        try {
+            // Get customer profile ID
+            $customerProfileId = $this->getCustomerProfileId($user);
+            if (!$customerProfileId) {
+                return [
+                    'success' => false,
+                    'message' => 'Customer profile not found. Please add a payment method first.'
+                ];
+            }
+
+            // Get payment profile ID
+            $paymentProfileId = $this->getPaymentProfileId($user);
+            if (!$paymentProfileId) {
+                return [
+                    'success' => false,
+                    'message' => 'Payment profile not found. Please add a payment method first.'
+                ];
+            }
+
+            // Create subscription with trial period
+            $subscriptionRequest = new AnetAPI\ARBCreateSubscriptionRequest();
+            $subscriptionRequest->setMerchantAuthentication($this->merchantAuthentication);
+
+            // Set subscription details
+            $subscriptionRequest->setRefId('TRIAL_' . time() . '_' . $user->id);
+
+            // Create subscription object
+            $arbSubscription = new AnetAPI\ARBSubscriptionType();
+
+            // Set regular subscription details (this is the amount AFTER trial ends)
+            $arbSubscription->setAmount($originalAmount);
+
+            // Set trial period - this is the CRITICAL part for $0 initial charge
+            $arbSubscription->setTrialOccurrences(1); // Only first billing is free
+            $arbSubscription->setTrialAmount(0.00); // Trial amount is $0.00
+            $arbSubscription->setName($subscription->name . ' - Trial Subscription');
+
+            // For Authorize.Net, we need to handle the trial period differently
+            // Since Authorize.Net doesn't support "trial days" directly, we'll use the billing cycle
+            // and set the trial to 1 occurrence with $0 amount
+
+            // Set billing cycle for regular subscription (after trial ends)
+            $interval = new AnetAPI\PaymentScheduleType\IntervalAType();
+
+            switch ($billingCycle) {
+                case 'daily':
+                    // Authorize.Net requires minimum 7 days for day-based subscriptions
+                    // For 10-day trial, we'll use weekly billing (7 days) and set trial to 1 occurrence
+                    $interval->setUnit('days');
+                    $interval->setLength(7);
+                    break;
+                case 'weekly':
+                    $interval->setUnit('days');
+                    $interval->setLength(7);
+                    break;
+                case 'monthly':
+                    $interval->setUnit('months');
+                    $interval->setLength(1);
+                    break;
+                case 'yearly':
+                    $interval->setUnit('months');
+                    $interval->setLength(12);
+                    break;
+                default:
+                    $interval->setUnit('months');
+                    $interval->setLength(1);
+            }
+
+            $arbSubscription->setPaymentSchedule($interval);
+
+            // Set customer and payment profile
+            $arbSubscription->setCustomerProfileId($customerProfileId);
+            $arbSubscription->setCustomerPaymentProfileId($paymentProfileId);
+
+            // Set subscription start date (trial starts immediately)
+            $arbSubscription->setStartDate(\Carbon\Carbon::now()->format('Y-m-d'));
+
+            // Set total occurrences (unlimited for recurring)
+            $arbSubscription->setTotalOccurrences(9999);
+
+            $subscriptionRequest->setSubscription($arbSubscription);
+
+            // Execute the request
+            $controller = new AnetController\ARBCreateSubscriptionController($subscriptionRequest);
+            $response = $controller->executeWithApiResponse($this->getApiEnvironment());
+
+            if ($response != null && $response->getMessages()->getResultCode() == "Ok") {
+                $subscriptionId = $response->getSubscriptionId();
+
+                \Illuminate\Support\Facades\Log::info('Trial subscription created successfully', [
+                    'user_id' => $user->id,
+                    'subscription_id' => $subscriptionId,
+                    'trial_days' => $trialDays,
+                    'original_amount' => $originalAmount,
+                    'billing_cycle' => $billingCycle
+                ]);
+
+                return [
+                    'success' => true,
+                    'subscription_id' => $subscriptionId,
+                    'authorize_transaction_id' => $subscriptionId,
+                    'message' => 'Trial subscription created successfully'
+                ];
+            } else {
+                $errorMessages = $response->getMessages()->getMessage();
+                $errorMessage = $errorMessages[0]->getText();
+
+                \Illuminate\Support\Facades\Log::error('Failed to create trial subscription', [
+                    'user_id' => $user->id,
+                    'error' => $errorMessage
+                ]);
+
+                return [
+                    'success' => false,
+                    'message' => 'Failed to create trial subscription: ' . $errorMessage
+                ];
+            }
+
+        } catch (Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Exception creating trial subscription', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+
+            return [
+                'success' => false,
+                'message' => 'Exception creating trial subscription: ' . $e->getMessage()
+            ];
+        }
+    }
+
     // Create Recurring Subscription for Business Users
     public function createRecurringSubscription(
         string $customerProfileId,

@@ -15,24 +15,69 @@ class DashboardController extends Controller
         $totalUsers =
             $user->isSubAdmin() ?
             User::join('zip_codes', function ($join) use ($user) {
-                $join->on('zip_codes.user_id', '=', DB::raw($user->id)); })->whereRaw('3959 * acos(cos(radians(zip_codes.latitude)) * cos(radians(users.latitude)) * cos(radians(users.longitude) - radians(zip_codes.longitude)) + sin(radians(zip_codes.latitude)) * sin(radians(users.latitude))) <= 7')->select('users.*')->groupBy('users.id')->get()->count() :
+                $join->on('zip_codes.user_id', '=', DB::raw($user->id));
+            })->whereRaw('3959 * acos(cos(radians(zip_codes.latitude)) * cos(radians(users.latitude)) * cos(radians(users.longitude) - radians(zip_codes.longitude)) + sin(radians(zip_codes.latitude)) * sin(radians(users.latitude))) <= 7')->select('users.*')->groupBy('users.id')->get()->count() :
             User::count();
         $totalActiveUsers =
             $user->isSubAdmin() ?
             User::join('zip_codes', function ($join) use ($user) {
-                $join->on('zip_codes.user_id', '=', DB::raw($user->id)); })->whereRaw('3959 * acos(cos(radians(zip_codes.latitude)) * cos(radians(users.latitude)) * cos(radians(users.longitude) - radians(zip_codes.longitude)) + sin(radians(zip_codes.latitude)) * sin(radians(users.latitude))) <= 7')->select('users.*')->where('users.is_blocked', '0')->groupBy('users.id')->get()->count() :
+                $join->on('zip_codes.user_id', '=', DB::raw($user->id));
+            })->whereRaw('3959 * acos(cos(radians(zip_codes.latitude)) * cos(radians(users.latitude)) * cos(radians(users.longitude) - radians(zip_codes.longitude)) + sin(radians(zip_codes.latitude)) * sin(radians(users.latitude))) <= 7')->select('users.*')->where('users.is_blocked', '0')->groupBy('users.id')->get()->count() :
             User::whereIsBlocked(0)->count();
         $totalInactiveUsers =
             $user->isSubAdmin() ?
             User::join('zip_codes', function ($join) use ($user) {
-                $join->on('zip_codes.user_id', '=', DB::raw($user->id)); })->whereRaw('3959 * acos(cos(radians(zip_codes.latitude)) * cos(radians(users.latitude)) * cos(radians(users.longitude) - radians(zip_codes.longitude)) + sin(radians(zip_codes.latitude)) * sin(radians(users.latitude))) <= 7')->select('users.*')->where('users.is_blocked', '1')->groupBy('users.id')->get()->count() :
+                $join->on('zip_codes.user_id', '=', DB::raw($user->id));
+            })->whereRaw('3959 * acos(cos(radians(zip_codes.latitude)) * cos(radians(users.latitude)) * cos(radians(users.longitude) - radians(zip_codes.longitude)) + sin(radians(zip_codes.latitude)) * sin(radians(users.latitude))) <= 7')->select('users.*')->where('users.is_blocked', '1')->groupBy('users.id')->get()->count() :
             User::whereIsBlocked(1)->count();
         $totalpayingCustomer =
             $user->isSubAdmin() ?
             User::join('zip_codes', function ($join) use ($user) {
-                $join->on('zip_codes.user_id', '=', DB::raw($user->id)); })->whereRaw('3959 * acos(cos(radians(zip_codes.latitude)) * cos(radians(users.latitude)) * cos(radians(users.longitude) - radians(zip_codes.longitude)) + sin(radians(zip_codes.latitude)) * sin(radians(users.latitude))) <= 7')->select('users.*')->where('users.is_blocked', '0')->whereNotNull('users.sub_id')->groupBy('users.id')->get()->count() :
+                $join->on('zip_codes.user_id', '=', DB::raw($user->id));
+            })->whereRaw('3959 * acos(cos(radians(zip_codes.latitude)) * cos(radians(users.latitude)) * cos(radians(users.longitude) - radians(zip_codes.longitude)) + sin(radians(zip_codes.latitude)) * sin(radians(users.latitude))) <= 7')->select('users.*')->where('users.is_blocked', '0')->whereNotNull('users.sub_id')->groupBy('users.id')->get()->count() :
             User::whereNotNull('sub_id')->whereIsBlocked(0)->count();
         return view('Admin.Pages.Dashboard.index', compact('totalUsers', 'totalActiveUsers', 'totalInactiveUsers', 'totalpayingCustomer'));
+    }
+
+    // API v2 Function
+    public function getDashboardv2()
+    {
+        $user = Auth::user();
+        $totalUsers =
+            $user->isSubAdmin() ?
+            User::join('zip_codes', function ($join) use ($user) {
+                $join->on('zip_codes.user_id', '=', DB::raw($user->id));
+            })->whereRaw('3959 * acos(cos(radians(zip_codes.latitude)) * cos(radians(users.latitude)) * cos(radians(users.longitude) - radians(zip_codes.longitude)) + sin(radians(zip_codes.latitude)) * sin(radians(users.latitude))) <= 7')->select('users.*')->groupBy('users.id')->get()->count() :
+            User::count();
+        $totalActiveUsers =
+            $user->isSubAdmin() ?
+            User::join('zip_codes', function ($join) use ($user) {
+                $join->on('zip_codes.user_id', '=', DB::raw($user->id));
+            })->whereRaw('3959 * acos(cos(radians(zip_codes.latitude)) * cos(radians(users.latitude)) * cos(radians(users.longitude) - radians(zip_codes.longitude)) + sin(radians(zip_codes.latitude)) * sin(radians(users.latitude))) <= 7')->select('users.*')->where('users.is_blocked', '0')->groupBy('users.id')->get()->count() :
+            User::whereIsBlocked(0)->count();
+        $totalInactiveUsers =
+            $user->isSubAdmin() ?
+            User::join('zip_codes', function ($join) use ($user) {
+                $join->on('zip_codes.user_id', '=', DB::raw($user->id));
+            })->whereRaw('3959 * acos(cos(radians(zip_codes.latitude)) * cos(radians(users.latitude)) * cos(radians(users.longitude) - radians(zip_codes.longitude)) + sin(radians(zip_codes.latitude)) * sin(radians(users.latitude))) <= 7')->select('users.*')->where('users.is_blocked', '1')->groupBy('users.id')->get()->count() :
+            User::whereIsBlocked(1)->count();
+        $totalpayingCustomer =
+            $user->isSubAdmin() ?
+            User::join('zip_codes', function ($join) use ($user) {
+                $join->on('zip_codes.user_id', '=', DB::raw($user->id));
+            })->whereRaw('3959 * acos(cos(radians(zip_codes.latitude)) * cos(radians(users.latitude)) * cos(radians(users.longitude) - radians(zip_codes.longitude)) + sin(radians(zip_codes.latitude)) * sin(radians(users.latitude))) <= 7')->select('users.*')->where('users.is_blocked', '0')->whereNotNull('users.sub_id')->groupBy('users.id')->get()->count() :
+            User::whereNotNull('sub_id')->whereIsBlocked(0)->count();
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Dashboard data retrieved successfully',
+            'data' => [
+                'totalUsers' => $totalUsers,
+                'totalActiveUsers' => $totalActiveUsers,
+                'totalInactiveUsers' => $totalInactiveUsers,
+                'totalpayingCustomer' => $totalpayingCustomer
+            ]
+        ], 200);
     }
 }
 

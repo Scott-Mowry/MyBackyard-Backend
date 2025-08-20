@@ -47,7 +47,10 @@ class User extends Authenticatable
         'is_profile_completed',
         'phone',
         'sub_id',
-        'is_sub_admin'
+        'is_sub_admin',
+        'recurring_subscription_id',
+        'recurring_subscription_start_date',
+        'recurring_subscription_status'
     ];
 
     /**
@@ -79,7 +82,7 @@ class User extends Authenticatable
 
     public function isSubAdmin()
     {
-        return $this->getAttribute('role') == 'is_sub_admin';
+        return $this->getAttribute('is_sub_admin') == '1';
     }
 
 
@@ -151,7 +154,7 @@ class User extends Authenticatable
      */
     public function receiver_notifications()
     {
-        return $this->hasMany(Notification::class, 'receiver_id``');
+        return $this->hasMany(Notification::class, 'receiver_id');
     }
 
 
@@ -163,7 +166,14 @@ class User extends Authenticatable
      */
     public function sender_notifications()
     {
-        return $this->hasMany(Notification::class, 'sender_id``');
+        return $this->hasMany(Notification::class, 'sender_id');
     }
 
+    /**
+     * Get the user's subscription
+     */
+    public function subscription()
+    {
+        return $this->belongsTo(\App\Models\subscription::class, 'sub_id');
+    }
 }

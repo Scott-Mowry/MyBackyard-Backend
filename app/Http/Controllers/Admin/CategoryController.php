@@ -141,4 +141,195 @@ class CategoryController extends Controller
             return redirect()->back()->with('error', 'Error in adding category.');
         }
     }
+
+    // API v2 Functions
+    public function getCategoriesv2(Request $request)
+    {
+        $data = Category::select('*')->orderBy('id', 'DESC')->get();
+
+        $categories = $data->map(function ($row) {
+            return [
+                'id' => $row->id,
+                'category_name' => $row->category_name ?? '---',
+                'category_icon' => $row->category_icon ?? '---',
+                'status' => $row->status ?? '---',
+                'created_at' => $row->created_at,
+                'updated_at' => $row->updated_at
+            ];
+        });
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Categories retrieved successfully',
+            'data' => $categories
+        ], 200);
+    }
+
+    public function getCategoryByIdv2($id)
+    {
+        $category = Category::find($id);
+
+        if (!$category) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Category not found'
+            ], 404);
+        }
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Category details retrieved successfully',
+            'data' => [
+                'id' => $category->id,
+                'category_name' => $category->category_name,
+                'category_icon' => $category->category_icon,
+                'status' => $category->status,
+                'created_at' => $category->created_at,
+                'updated_at' => $category->updated_at
+            ]
+        ], 200);
+    }
+
+    public function actionCategoryByIdv2($id, $status)
+    {
+        $category = Category::find($id);
+
+        if (!$category) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Category not found'
+            ], 404);
+        }
+
+        $update = $category->update(['status' => $status]);
+
+        if ($update) {
+            if ($status == 'Active') {
+                return response()->json([
+                    'status' => true,
+                    'message' => 'Category has been activated successfully'
+                ], 200);
+            } else {
+                return response()->json([
+                    'status' => true,
+                    'message' => 'Category has been deactivated successfully'
+                ], 200);
+            }
+        } else {
+            return response()->json([
+                'status' => false,
+                'message' => 'Server Error'
+            ], 500);
+        }
+    }
+
+    public function updateCategoryv2(Request $request)
+    {
+        $category = Category::find($request->id);
+
+        if (!$category) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Category not found'
+            ], 404);
+        }
+
+        $data = ['category_name' => $request->category_name];
+
+        if ($request->hasFile('category_icon')) {
+            $img = $request->category_icon;
+            $path = $img->store('public/icons');
+            $file_path = Storage::url($path);
+            $data['category_icon'] = $file_path;
+        }
+
+        try {
+            $category->update($data);
+            return response()->json([
+                'status' => true,
+                'message' => 'Category has been updated successfully',
+                'data' => [
+                    'id' => $category->id,
+                    'category_name' => $category->category_name,
+                    'category_icon' => $category->category_icon,
+                    'status' => $category->status
+                ]
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Error in updating category'
+            ], 500);
+        }
+    }
+
+    public function addCategoryv2(Request $request)
+    {
+        try {
+            $data = ['category_name' => $request->category_name];
+
+            if ($request->hasFile('category_icon')) {
+                $img = $request->category_icon;
+                $path = $img->store('public/icons');
+                $file_path = Storage::url($path);
+                $data['category_icon'] = $file_path;
+            }
+
+            $category = new Category();
+            $category->category_name = $data['category_name'];
+            $category->category_icon = $data['category_icon'] ?? null;
+            $category->save();
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Category has been added successfully',
+                'data' => [
+                    'id' => $category->id,
+                    'category_name' => $category->category_name,
+                    'category_icon' => $category->category_icon,
+                    'status' => $category->status
+                ]
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Error in adding category'
+            ], 500);
+        }
+    }
+
+    public function deleteCategoryv2($id)
+    {
+        try {
+            $category = Category::find($id);
+
+            if (!$category) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Category not found'
+                ], 404);
+            }
+
+            // Delete the category icon file if it exists
+            if ($category->category_icon) {
+                $iconPath = str_replace('/storage/', 'public/', $category->category_icon);
+                if (Storage::exists($iconPath)) {
+                    Storage::delete($iconPath);
+                }
+            }
+
+            // Delete the category
+            $category->delete();
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Category has been deleted successfully'
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Error in deleting category'
+            ], 500);
+        }
+    }
 }

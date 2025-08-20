@@ -112,10 +112,19 @@ class AuthController extends BaseController
     {
         $user = User::whereId(auth()->user()->id)->latest()->first();
         if ($user) {
+            // Add recurring subscription fields for business users
             if ($user->role == 'Business') {
                 $days = Schedule::where('owner_id', $user->id)->get();
                 $user["days"] = $days;
+
+                // Ensure recurring subscription fields are included
+                $user->makeVisible([
+                    'recurring_subscription_id',
+                    'recurring_subscription_start_date',
+                    'recurring_subscription_status'
+                ]);
             }
+
             return $this->sendResponse(
                 array(
                     "user" => $user
