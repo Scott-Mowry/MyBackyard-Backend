@@ -182,6 +182,7 @@ Route::prefix('v2/admin')->group(function () {
                 Route::get('/', 'getReceiptsv2');
             });
             Route::post('/assignSubscription', 'assignSubscriptionToUser');
+            Route::post('/applyPromoCode', 'applyPromoCodeToUser');
         });
 
         Route::controller(AdminPlacesController::class)->group(function () {

@@ -11,6 +11,7 @@ use Illuminate\Foundation\Auth\AuthenticatesUsers;
 use App\Models\Receipt;
 use App\Models\User;
 use App\Models\subscription;
+use App\Models\BusinessPromoCode;
 
 class AdminController extends Controller
 {
@@ -452,6 +453,164 @@ class AdminController extends Controller
             return response()->json([
                 'status' => false,
                 'message' => 'Failed to assign subscription'
+            ], 500);
+        }
+    }
+
+    /**
+     * Apply promo code to user (Admin function)
+     */
+    public function applyPromoCodeToUser(Request $request)
+    {
+        try {
+            $user = $request->user();
+
+            if (!$user) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'User not authenticated'
+                ], 401);
+            }
+
+            // Check if user has Admin role
+            if ($user->role !== 'Admin') {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Access denied. Only administrators can access this resource.'
+                ], 403);
+            }
+
+            // Validate request
+            $validator = Validator::make($request->all(), [
+                'user_id' => 'required|integer|exists:users,id',
+                'subscription_id' => 'required|integer|exists:subscriptions,id',
+                'promo_code_id' => 'required|integer|exists:promo_codes,id',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $userId = $request->input('user_id');
+            $subscriptionId = $request->input('subscription_id');
+            $promoCodeId = $request->input('promo_code_id');
+
+            // Find the user
+            $targetUser = User::find($userId);
+            if (!$targetUser) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'User not found'
+                ], 404);
+            }
+
+            // Find the subscription
+            $subscription = \App\Models\subscription::find($subscriptionId);
+            if (!$subscription) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Subscription not found'
+                ], 404);
+            }
+
+            // Find the promo code
+            $promoCode = \App\Models\BusinessPromoCode::find($promoCodeId);
+            if (!$promoCode) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Promo code not found'
+                ], 404);
+            }
+
+            // Check if promo code is valid and has free trial discount type
+            if (!$promoCode->is_valid || $promoCode->discount_type !== 'free_trial') {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Invalid promo code or not a free trial type'
+                ], 400);
+            }
+
+            // Calculate next billing date based on free trial days
+            $freeDays = $promoCode->free_days ?: 30; // Default to 30 days if not set
+            $nextBillingDate = now()->addDays($freeDays);
+
+            // Create receipt record
+            $receipt = Receipt::create([
+                'user_id' => $userId,
+                'subscription_id' => $subscriptionId,
+                'payment_date' => now(),
+                'amount' => 0.00, // Free trial
+                'duration' => $freeDays,
+                'strikes' => 0,
+                'cancelled' => false,
+                'is_recurring' => false,
+                'recurring_subscription_id' => null,
+                'authorize_transaction_id' => 'ADMIN_PROMO_' . $promoCode->code . '_' . time(),
+                'payment_type' => 'promo',
+                'billing_cycle_number' => null,
+                'next_billing_date' => $nextBillingDate,
+            ]);
+
+            // Update the user's subscription
+            $targetUser->sub_id = $subscriptionId;
+            $targetUser->save();
+
+            // Increment promo code usage count
+            $promoCode->incrementUsage();
+
+            Log::info('Promo code applied to user by admin', [
+                'admin_user_id' => $user->id,
+                'target_user_id' => $userId,
+                'subscription_id' => $subscriptionId,
+                'promo_code_id' => $promoCodeId,
+                'free_days' => $freeDays,
+                'next_billing_date' => $nextBillingDate
+            ]);
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Promo code applied successfully! User now has ' . $freeDays . ' days free trial.',
+                'data' => [
+                    'user' => [
+                        'id' => $targetUser->id,
+                        'name' => $targetUser->name,
+                        'email' => $targetUser->email,
+                        'sub_id' => $targetUser->sub_id
+                    ],
+                    'subscription' => [
+                        'id' => $subscription->id,
+                        'name' => $subscription->name,
+                        'price' => $subscription->price,
+                        'type' => $subscription->type
+                    ],
+                    'promo_code' => [
+                        'id' => $promoCode->id,
+                        'code' => $promoCode->code,
+                        'discount_type' => $promoCode->discount_type,
+                        'free_days' => $freeDays
+                    ],
+                    'receipt' => [
+                        'id' => $receipt->id,
+                        'amount' => $receipt->amount,
+                        'payment_type' => $receipt->payment_type,
+                        'next_billing_date' => $receipt->next_billing_date
+                    ]
+                ]
+            ], 200);
+
+        } catch (\Exception $e) {
+            Log::error('Error applying promo code: ' . $e->getMessage(), [
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to apply promo code'
             ], 500);
         }
     }
