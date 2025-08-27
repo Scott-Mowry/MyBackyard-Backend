@@ -531,7 +531,6 @@ class UserController extends Controller
             'zip_code' => 'nullable|string|max:20',
             'profile_image' => 'nullable|string|max:500',
             'description' => 'nullable|string|max:1000',
-            'password' => 'sometimes|string|min:6',
             'role' => 'sometimes|in:User,Business,Admin',
             'is_blocked' => 'sometimes|boolean'
         ]);
